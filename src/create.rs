@@ -232,9 +232,10 @@ impl Execution {
         debug!("locale = {:?}", locale);
         let platform = self.platform();
         debug!("platform = {:?}", platform);
-        let source_wxs = self.wxs_source()?;
+        let mut source_wxs = self.wxs_source()?;
+        source_wxs.set_file_name("*.wxs");
         debug!("source_wxs = {:?}", source_wxs);
-        let source_wixobj = self.source_wixobj();
+        let mut source_wixobj = self.source_wixobj();
         debug!("source_wixobj = {:?}", source_wixobj);
         let destination_msi = self.destination_msi(&name, &version, &platform);
         debug!("destination_msi = {:?}", destination_msi);
@@ -258,39 +259,46 @@ impl Execution {
         }
         // Compile the installer
         info!("Compiling the installer");
-        let mut compiler = self.compiler()?;
-        debug!("compiler = {:?}", compiler);
-        if self.capture_output {
-            trace!("Capturing the '{}' output", WIX_COMPILER);
-            compiler.stdout(Stdio::null());
-            compiler.stderr(Stdio::null());
-        }
-        compiler.arg(format!("-dVersion={}", version))
-            .arg(format!("-dPlatform={}", platform))
-            .arg("-ext")
-            .arg("WixUtilExtension")
-            .arg("-o")
-            .arg(&source_wixobj)
-            .arg(&source_wxs);
-        debug!("command = {:?}", compiler);
-        let status = compiler.status().map_err(|err| {
-            if err.kind() == ErrorKind::NotFound {
-                Error::Generic(format!(
-                    "The compiler application ({}) could not be found in the PATH environment \
+        let mut objects = vec![];
+        for file in glob::glob(source_wxs.as_os_str().to_str().unwrap()).unwrap() {
+            let source_wxs = file.unwrap();
+            source_wixobj.set_file_name(source_wxs.file_name().expect("glob results will always have names"));
+            source_wixobj.set_extension(WIX_OBJECT_FILE_EXTENSION);
+            objects.push(source_wixobj.clone());
+            let mut compiler = self.compiler()?;
+            debug!("compiler = {:?}", compiler);
+            if self.capture_output {
+                trace!("Capturing the '{}' output", WIX_COMPILER);
+                compiler.stdout(Stdio::null());
+                compiler.stderr(Stdio::null());
+            }
+            compiler.arg(format!("-dVersion={}", version))
+                .arg(format!("-dPlatform={}", platform))
+                .arg("-ext")
+                .arg("WixUtilExtension")
+                .arg("-o")
+                .arg(&source_wixobj)
+                .arg(&source_wxs);
+            debug!("command = {:?}", compiler);
+            let status = compiler.status().map_err(|err| {
+                if err.kind() == ErrorKind::NotFound {
+                    Error::Generic(format!(
+                        "The compiler application ({}) could not be found in the PATH environment \
                     variable. Please check the WiX Toolset (http://wixtoolset.org/) is \
                     installed and check the WiX Toolset's '{}' folder has been added to the PATH \
                     system environment variable, the {} system environment variable exists, or use \
                     the '-b,--bin-path' command line argument.",
-                    WIX_COMPILER,
-                    BINARY_FOLDER_NAME,
-                    WIX_PATH_KEY
-                ))
-            } else {
-                err.into()
+                        WIX_COMPILER,
+                        BINARY_FOLDER_NAME,
+                        WIX_PATH_KEY
+                    ))
+                } else {
+                    err.into()
+                }
+            })?;
+            if !status.success() {
+                return Err(Error::Command(WIX_COMPILER, status.code().unwrap_or(100)));
             }
-        })?;
-        if !status.success() {
-            return Err(Error::Command(WIX_COMPILER, status.code().unwrap_or(100)));
         }
         // Link the installer
         info!("Linking the installer");
@@ -310,7 +318,7 @@ impl Execution {
             .arg("-ext")
             .arg("WixUtilExtension")
             .arg(format!("-cultures:{}", self.culture))
-            .arg(&source_wixobj)
+            .args(&objects)
             .arg("-out")
             .arg(&destination_msi);
         debug!("command = {:?}", linker);

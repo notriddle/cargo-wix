@@ -27,6 +27,7 @@ semver = "0.9"
 termcolor = "1"
 toml = "0.4"
 uuid = { version = "0.7", features = ["v4"] }
+glob = "0.3"
 
 [dev-dependencies]
 assert_cmd = "0.9"
